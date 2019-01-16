@@ -151,6 +151,57 @@ class Connection
     }
 
     /**
+     * 执行SQL语句（增、删、改 类型的SQL），返回受影响行数，执行失败抛出异常
+     * @param string $sql 执行的SQL，可以包含问号或冒号占位符，支持{{%table_name}}格式自动替换为表前缀
+     * @param array $params 参数，对应SQL中的冒号或问号占位符
+     * @return int 返回受影响行数
+     * @throws Exception
+     */
+    public function execute($sql, $params = array())
+    {
+        $sql = $this->quoteSql($sql);
+        try {
+            $statement = $this->getPdo()->prepare($sql);
+            $start = microtime(true);
+            if ($statement->execute($params)) {
+                $this->logQuery($sql, $params, $this->getElapsedTime($start));
+                return $statement->rowCount();
+            }
+        } catch (PDOException $ex) {
+            throw new Exception($ex->getMessage());
+        }
+    }
+
+    public function query(){}
+
+    /**
+     * 解析SQL中的占位符("?"或":")，主要用于调试SQL
+     * @param string $sql
+     * @param array $params
+     * @return string
+     */
+    public function parsePlaceholder($sql, array $params = array())
+    {
+        // 一次替换一个问号
+        $count = substr_count($sql, '?');
+        for ($i = 0; $i < $count; $i++) {
+            $sql = preg_replace('/\?/', $this->getPdo()->quote($params[$i]), $sql, 1);
+        }
+
+        // 替换冒号
+        $sql = preg_replace_callback('/:(\w+)/', function ($matches) use ($params) {
+            if (isset($params[$matches[1]])) {
+                return $this->getPdo()->quote($params[$matches[1]]);
+            } else if (isset($params[':' . $matches[1]])) {
+                return $this->getPdo()->quote($params[':' . $matches[1]]);
+            }
+            return $matches[0];
+        }, $sql);
+
+        return $sql;
+    }
+
+    /**
      * 给表名加引号
      * 如果有前缀，前缀也将被加上引号
      * 如果已加引号，或包含 '(' or '{{', 将不做处理
@@ -217,4 +268,63 @@ class Connection
         return strpos($name, '`') !== false || $name === '*' ? $name : '`' . $name .'`';
     }
 
+    /**
+     * 开启记录所有SQL，如果不开启，默认只记录最后一次执行的SQL
+     */
+    public function enableQueryLog()
+    {
+        $this->enableQueryLog = true;
+    }
+
+    public function disableQueryLog()
+    {
+        $this->enableQueryLog = false;
+    }
+
+    /**
+     * 记录SQL
+     * @param $sql
+     * @param array $params
+     */
+    protected function logQuery($sql, $params = array(), $time = null)
+    {
+        if ($this->enableQueryLog) {
+            $this->queryLog[] = compact('sql', 'params', 'time');
+        } else {
+            $this->queryLog = array(compact('sql', 'params', 'time'));
+        }
+    }
+
+    /**
+     * 返回执行的SQL
+     * @return array
+     */
+    public function getQueryLog()
+    {
+        return $this->queryLog;
+    }
+
+    /**
+     * 返回最近一次执行的sql语句
+     * @return string
+     */
+    public function getLastSql()
+    {
+        if (count($this->queryLog) == 0) {
+            return null;
+        }
+        $queryLog = end($this->queryLog);
+        return $this->parsePlaceholder($queryLog['sql'], $queryLog['params']);
+    }
+
+    /**
+     * 计算所使用的时间
+     *
+     * @param int $start
+     * @return float
+     */
+    protected function getElapsedTime($start)
+    {
+        return round((microtime(true) - $start) * 1000, 2);
+    }
 }
