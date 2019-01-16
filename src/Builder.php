@@ -91,4 +91,36 @@ class Builder
         return $this;
     }
 
+    /**
+     * 执行新增，返回受影响行数
+     * @param array $data
+     * @return bool
+     */
+    public function insert(array $data)
+    {
+        $names = array();
+        $replacePlaceholders = array();
+        foreach ($data as $name => $value) {
+            static::checkColumnName($name);
+            $names[] = '[[' . $name . ']]';
+            $phName = ':' . $name;
+            $replacePlaceholders[] = $phName;
+        }
+        $sql = 'INSERT INTO ' . $this->table . ' (' . implode(', ', $names) .') VALUES (' . implode(', ', $replacePlaceholders) . ')';
+        return 0 < static::getConnection()->execute($sql, $data);
+    }
+
+    /**
+     * 检查列名是否有效
+     *
+     * @param string $column 列名只允许字母、数字、下划线、点(.)、中杠(-)
+     * @throws Exception
+     */
+    protected static function checkColumnName($column)
+    {
+        if (!preg_match('/^[\w\-\.]+$/', $column)) {
+            throw new Exception('列名只允许字母、数字、下划线、点(.)、中杠(-)');
+        }
+    }
+
 }

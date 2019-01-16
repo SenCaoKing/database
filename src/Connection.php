@@ -18,4 +18,203 @@ class Connection
 
     protected $enableQueryLog = false;
     protected $queryLog = array();
+
+    protected $config = array(
+        'dsn' => 'mysql:host=localhost;dbname=sen_database',
+        'username' => 'root',
+        'password' => 'root',
+        'charset' => 'utf8',
+        'tablePrefix' => '',
+        'options' => array(
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_STRINGIFY_FETCHES => false, // 禁止提取的时候将数值转换为字符串
+            PDO::ATTR_EMULATE_PREPARES => false,  // 禁止模拟预处理语句
+            PDO::ATTR_CASE => PDO::CASE_NATURAL,
+        ),
+        'slave' => array(/*
+            array(
+                'dsn' => 'mysql:host=192.168.11.25;dbname=sen_database',
+                'username' => 'root',
+                'password' => 'root',
+            ),
+            array(
+                'dsn' => 'mysql:host=192.168.11.26;dbname=sen_database',
+                'username' => 'root',
+                'password' => 'root',
+            ),*/
+        ),
+    );
+
+    /**
+     * Connection constructor.
+     * @param array $config 配置信息
+     */
+    public function __construct(array $config)
+    {
+        $this->config = array_replace_recursive($this->config, $config);
+    }
+
+    /**
+     * 返回用于操作主库的PDO对象（增、删、改）
+     * @return PDO
+     */
+    public function getPdo()
+    {
+        if ($this->pdo instanceof PDO) {
+            return $this->pdo;
+        }
+
+        $this->pdo = $this->makePdo($this->config);
+        return $this->pdo;
+    }
+
+    protected function makePdo(array $config)
+    {
+        try {
+            $pdo = new PDO($config['dsn'], $config['username'], $config['password'], $config['options']);
+            $pdo->exec('SET NAMES ' . $pdo->quote($config['charset']));
+            return $pdo;
+        } catch (PDOException $ex) {
+            throw new Exception($ex->getMessage());
+        }
+    }
+
+    /**
+     * 返回用于查询的PDO对象（如果在事务中，将自动调用getPdo()以确保整个事务均使用主库）
+     * @return PDO
+     */
+    public function getReadPdo()
+    {
+        if ($this->transactions >= 1) {
+            return $this->getPdo();
+        }
+
+        if ($this->readPdo instanceof PDO) {
+            return $this->readPdo;
+        }
+
+        if (!is_array($this->config['slave']) || count($this->config['slave']) == 0) {
+            return $this->getPdo();
+        }
+
+        $slaveDbConfig = $this->config['slave'];
+        shuffle($slaveDbConfig);
+        do {
+            // 取出一个打乱后的从库信息
+            $config = array_shift($slaveDbConfig);
+
+            // 使用主库信息补全从库配置
+            $config = array_replace_recursive($this->config, $config);
+
+            try {
+                $this->readPdo = $this->makePdo($config);
+                return $this->readPdo;
+            } catch (\Exception $ex) {
+                // nothing to do
+            }
+
+        } while(count($slaveDbConfig) > 0);
+
+        // 使用主库
+        return $this->readPdo = $this->getPdo();
+    }
+
+    /**
+     * 返回表前缀
+     * @return string
+     */
+    protected function getTablePrefix()
+    {
+        return $this->config['tablePrefix'];
+    }
+
+    /**
+     * 解析SQL中的表名
+     * 当表前缀为"cms_"时将sql中的"{{%user}}"解析为"`cms_user`"
+     * 解析"[[列名]]" 为 "`列名`"
+     * @param $sql
+     * @return string
+     */
+    public function quoteSql($sql)
+    {
+        return preg_replace_callback(
+            '/(\\{\\{(%?[\w\-\.\$ ]+%?)\\}\\}|\\[\\[([\w\-\. ]+)\\]\\])/',
+            function ($matches) {
+                if (isset($matches[3])) {
+                    return $this->quoteColumnName($matches[3]);
+                } else {
+                    return str_replace('%', $this->getTablePrefix(), $this->quoteTableName($matches[2]));
+                }
+            },
+            $sql
+        );
+    }
+
+    /**
+     * 给表名加引号
+     * 如果有前缀，前缀也将被加上引号
+     * 如果已加引号，或包含 '(' or '{{', 将不做处理
+     * @param string $name
+     * @return string
+     */
+    protected function quoteTableName($name)
+    {
+        if (strpos($name, '(') !== false || strpos($name, '{{') !== false) {
+            return $name;
+        }
+        if (strpos($name, '.') === false) {
+            return $this->quoteSimpleTableName($name);
+        }
+        $parts = explode('.', $name);
+        foreach ($parts as $i => $part) {
+            $parts[$i] = $this->quoteSimpleTableName($part);
+        }
+
+        return implode('.', $parts);
+    }
+
+    /**
+     * 给列名加引号
+     * 如果有前缀，前缀也将被加上引号
+     * 如果列名已加引号，或包含 '(', '[[' or '{{', 将不做处理
+     * @param string $name
+     * @return string
+     */
+    protected function quoteColumnName($name)
+    {
+        if (strpos($name, '(') !== false || strpos($name, '[[') !== false || strpos($name, '{{') !== false) {
+            return $name;
+        }
+        if (($pos = strrpos($name, '.')) !== false) {
+            $prefix = $this->quoteTableName(substr($name, 0, $pos) . '.');
+            $name = substr($name, $pos + 1);
+        } else {
+            $prefix = '';
+        }
+
+        return $prefix . $this->quoteSimpleColumnName($name);
+    }
+
+    /**
+     * 给表名加上引号
+     * 表名为无前缀的简单列名
+     * @param string $name
+     * @return string
+     */
+    protected function quoteSimpleTableName($name)
+    {
+        return strpos($name, '`') !== false ? $name : '`' . $name .'`';
+    }
+
+    /**
+     * 给列名加上引号
+     * 列名为无前缀的简单列名
+     * @param string $name
+     * @return string
+     */
+    protected function quoteSimpleColumnName($name)
+    {
+        return strpos($name, '`') !== false || $name === '*' ? $name : '`' . $name .'`';
+    }
+
 }
