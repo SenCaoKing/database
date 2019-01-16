@@ -172,7 +172,50 @@ class Connection
         }
     }
 
-    public function query(){}
+    /**
+     * 执行SQL语句，返回array（查询类型的SQL）
+     * @param string $sql
+     * @param array $params
+     * @param int $fetchStyle 从此参数开始，为setFetchMode的参数，例如为PDO::FETCH_CLASS，则可以传入第4个参数($classname)
+     * @return array
+     * @throws Exception
+     */
+    public function query($sql, $params = array(), $fetchStyle = PDO::FETCH_ASSOC)
+    {
+        $sql = $this->quoteSql($sql);
+        try {
+            $statement = $this->getReadPdo()->prepare($sql);
+
+            $start = microtime(true);
+            $statement->execute($params);
+            $this->logQuery($sql, $params, $this->getElapsedTime($start));
+
+            $args = func_get_args();
+            $args = array_slice($args, 2);
+
+            $args[0] = $fetchStyle;
+
+            // PDOStatement::setFetchMode ( int $mode)
+            // PDOStatement::setFetchMode (int $PDO::FETCH_COLUMN, int $colno)
+            // PDOStatement::setFetchMode (int $PDO::FETCH_CLASS, string $classname, array $ctorargs)
+            // PDOStatement::setFetchMode (int $PDO::FETCH_INTO, object $object)
+            call_user_func_array(array($statement, 'setFetchMode'), $args);
+            return $statement->fetchAll();
+        } catch (PDOException $ex) {
+            throw new Exception($ex->getMessage());
+        }
+    }
+
+    /**
+     * 返回最后插入行的ID或序列值
+     * PDO::lastInsertId
+     * @param null $sequence 序列名称
+     * @return string
+     */
+    public function getLastInsertId($sequence = null)
+    {
+        return (string)$this->getPdo()->lastInsertId($sequence);
+    }
 
     /**
      * 解析SQL中的占位符("?"或":")，主要用于调试SQL

@@ -111,6 +111,19 @@ class Builder
     }
 
     /**
+     * 执行新增，返回自增ID
+     * @param array $data
+     * @return int
+     */
+    public function insertGetId(array $data)
+    {
+        if (static::insert($data)) {
+            return static::getConnection()->getLastInsertId();
+        }
+        return 0;
+    }
+
+    /**
      * 检查列名是否有效
      *
      * @param string $column 列名只允许字母、数字、下划线、点(.)、中杠(-)

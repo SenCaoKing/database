@@ -11,5 +11,8 @@ $config = [
 ];
 
 $db = new \Sen\Database\Builder($config);
+$db->getConnection()->enableQueryLog();
 
-var_dump($db);
+$id = $db->table('test')->insertGetId(['username' =>134, 'status' => '0']);
+
+var_dump($id);
