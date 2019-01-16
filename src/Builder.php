@@ -124,6 +124,41 @@ class Builder
     }
 
     /**
+     * 根据SQL查询，返回符合条件的所有数据
+     *
+     * @param string $sql
+     * @param array $params
+     * @param null|string $fetchClass
+     * @return array|object[]
+     */
+    public function findAllBySql($sql = '', $params = array(), $fetchClass = null)
+    {
+        $sql = static::appendLock($sql);
+
+        $this->reset();
+
+        if ($fetchClass === null) {
+            return static::getConnection()->query($sql, $params, \PDO::FETCH_ASSOC);
+        } else {
+            return static::getConnection()->query($sql, $params, \PDO::FETCH_CLASS, $fetchClass);
+        }
+    }
+
+    /**
+     * lockForUpdate
+     *
+     * @param $sql
+     * @return string
+     */
+    protected function appendLock($sql)
+    {
+        if ($this->lockForUpdate === true) {
+            $sql = rtrim($sql) . ' FOR UPDATE';
+        }
+        return $sql;
+    }
+
+    /**
      * 检查列名是否有效
      *
      * @param string $column 列名只允许字母、数字、下划线、点(.)、中杠(-)
@@ -134,6 +169,22 @@ class Builder
         if (!preg_match('/^[\w\-\.]+$/', $column)) {
             throw new Exception('列名只允许字母、数字、下划线、点(.)、中杠(-)');
         }
+    }
+
+    /**
+     * 清空所有条件
+     */
+    protected function reset()
+    {
+        $this->table = null;
+        $this->fetchClass = null;
+        $this->orderBy = null;
+        $this->field = null;
+        $this->limit = null;
+        $this->offset = null;
+        $this->condition = null;
+        $this->params = null;
+        $this->lockForUpdate = null;
     }
 
 }
