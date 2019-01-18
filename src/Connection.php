@@ -207,6 +207,31 @@ class Connection
     }
 
     /**
+     * 执行查询统计类型语句，返回具体单个值，常用语COUNT、AVG、MAX、MIN、SUM
+     * @param $sql
+     * @param array $params
+     * @return mixed
+     * @throws Exception
+     */
+    public function queryScalar($sql, $params = array())
+    {
+        $sql = $this->quoteSql($sql);
+        try {
+            $statement = $this->getReadPdo()->prepare($sql);
+            $start = microtime(true);
+            $statement->execute($params);
+            $this->logQuery($sql, $params, $this->getElapsedTime($start));
+            $data = $statement->fetch(PDO::FETCH_NUM);
+            if (is_array($data) && isset($data[0])) {
+                return $data[0];
+            }
+            throw new Exception(__CLASS__ . '::queryScalar() fetch result set error.');
+        } catch (PDOException $ex) {
+            throw new Exception($ex->getMessage());
+        }
+    }
+
+    /**
      * 返回最后插入行的ID或序列值
      * PDO::lastInsertId
      * @param null $sequence 序列名称
@@ -215,6 +240,50 @@ class Connection
     public function getLastInsertId($sequence = null)
     {
         return (string)$this->getPdo()->lastInsertId($sequence);
+    }
+
+    /**
+     * 开启事务
+     */
+    public function beginTransaction()
+    {
+        ++$this->transactions;
+        if ($this->transactions == 1) {
+            $this->getPdo()->beginTransaction();
+        }
+    }
+
+    /**
+     * 提交事务
+     */
+    public function commit()
+    {
+        if ($this->transactions == 1) {
+            $this->getPdo()->commit();
+        }
+        --$this->transactions;
+    }
+
+    /**
+     * 回滚事务
+     */
+    public function rollBack()
+    {
+        if ($this->transactions == 1) {
+            $this->transactions = 0;
+            $this->getPdo()->rollBack();
+        } else {
+            --$this->transactions;
+        }
+    }
+
+    /**
+     * 断开数据库链接
+     */
+    public function disconnect()
+    {
+        $this->pdo = null;
+        $this->readPdo = null;
     }
 
     /**
@@ -319,6 +388,9 @@ class Connection
         $this->enableQueryLog = true;
     }
 
+    /**
+     * 禁止记录所有SQL
+     */
     public function disableQueryLog()
     {
         $this->enableQueryLog = false;

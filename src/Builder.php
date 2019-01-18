@@ -166,17 +166,205 @@ class Builder
     }
 
     /**
-     * lockForUpdate
-     *
-     * @param $sql
-     * @return string
+     * 根据SQL返回对象
+     * @param string $sql
+     * @param array $params
+     * @return array|object|null
      */
-    protected function appendLock($sql)
+    public function findOneBySql($sql = '', $params = array())
     {
-        if ($this->lockForUpdate === true) {
-            $sql = rtrim($sql) . ' FOR UPDATE';
+        $rows = static::findAllBySql($sql, $params, $this->fetchClass);
+        if (count($rows) > 0) {
+            return $rows[0];
         }
-        return $sql;
+        return null;
+    }
+
+    /**
+     *
+     * 返回符合条件的单条数据
+     *
+     * @param string $condition
+     * @param array $params
+     * @return array|object|null
+     */
+    public function findOne($condition = '', $params = array())
+    {
+        $this->limit = 1;
+        $arr = $this->findAll($condition, $params);
+        if (count($arr) == 0) {
+            return null;
+        }
+        return $arr[0];
+    }
+
+    /**
+     * 根据主键查询
+     *
+     * @param int $pk 主键值，不支持符合主键
+     * @param string $primaryKeyField 主键字段，默认为`id`
+     * @return array|null|object
+     */
+    public function findByPk($pk, $primaryKeyField = 'id')
+    {
+        static::checkColumnName($primaryKeyField);
+        $this->where('[[' . $primaryKeyField . ']]=?', [$pk]);
+        $this->limit = 1;
+        return $this->findOne();
+    }
+
+    /**
+     * 执行更新操作，返回受影响行数
+     * @param array $data 需要更新的数据，关联数组，key为字段名，value为对应的值，字段名只允许字母、数字或下划线
+     * @param string $condition
+     * @param array $params
+     * @return int
+     */
+    public function update(array $data, $condition = '', $params = array())
+    {
+        $this->where($condition, $params);
+
+        $updatePlaceholders = [];
+        foreach ($data as $name => $value) {
+            static::checkColumnName($name);
+            $updatePlaceholders[] = "[[$name]]" . ' = ' . self::PARAM_PREFIX . $name;
+            $this->params[self::PARAM_PREFIX . $name] = $value;
+        }
+
+        $sql = 'UPDATE ' . $this->table . ' SET ' . implode(', ', $updatePlaceholders) . $this->getWhereString();
+        $sql = static::replacePlaceholder($sql);
+
+        $rowCount = static::getConnection()->execute($sql, $this->params);
+        $this->reset();
+        return $rowCount;
+    }
+
+    /**
+     * 自增。如果自减，传入负数即可
+     * @param string $field 字段
+     * @param int $value 自增值，默认自增1
+     * @return int 返回受影响行数
+     */
+    public function increment($field, $value = 1, $condition = '', $params = array())
+    {
+        static::checkColumnName($field);
+        $this->where($condition, $params);
+
+        $sql = 'UPDATE ' . $this->table . ' SET [[' . $field . ']] = [[' . $field . ']] + (' . intval($value) . ')' . $this->getWhereString();
+        $sql = static::replacePlaceholder($sql);
+        $rowCount = static::getConnection()->execute($sql, $this->params);
+        $this->reset();
+        return $rowCount;
+    }
+
+    /**
+     * 执行删除操作，返回受影响行数
+     *
+     * @param string $condition
+     * @param array $params
+     * @return int
+     */
+    public function delete($condition = '', $params = array())
+    {
+        $this->where($condition, $params);
+
+        $sql = 'DELETE FROM ' . $this->table . $this->getWhereString();
+        $sql = $this->replacePlaceholder($sql);
+
+        $rowCount = static::getConnection()->execute($sql, $this->params);
+        $this->reset();
+        return $rowCount;
+    }
+
+    /**
+     * 加载数据库字段默认值
+     * @param null $entity 对象，如果为空，此方法返回数组
+     * @return array|object
+     */
+    public function loadDefaultValues($entity = null)
+    {
+        $fields = static::findAllBySql('SHOW FULL FIELDS FROM ' . $this->table);
+        $defaults = array_column($fields, 'Default', 'Field');
+
+        if ($entity === null) {
+            return $defaults;
+        }
+
+        foreach ($defaults as $key => $value) {
+            $entity->$key = $value;
+        }
+        return $entity;
+    }
+
+    /**
+     * 统计查询 count()、sum()、max()、min()、avg()
+     *
+     * @param $method
+     * @param $arguments
+     * @return mixed
+     * @throws Exception
+     */
+    public function __call($method, $arguments)
+    {
+        if (!in_array(strtoupper($method), array('SUM', 'COUNT', 'MAX', 'MIN', 'AVG'))) {
+            throw new Exception('Call to undefined method ' . __CLASS__ . '::' . $method . '()');
+        }
+
+        $field = isset($arguments[0]) ? $arguments[0] : (static::isEmpty($this->field) ? '*' : $this->field);
+        $field = trim($field);
+
+        if ($field !== '*') {
+            if (!preg_match('/^[\w\.]+$/', $field)) {
+                throw new Exception(__CLASS__ . '::' . $method . '() 第一个参数只允许字母、数字、下划线(_)、点(.)或星号(*)');
+            }
+            $field = '[[' . $field . ']]';
+        }
+
+        $method = strtoupper($method);
+
+        $sql = 'SELECT ' . $method . '(' . $field . ') FROM ' . $this->table . $this->getWhereString();
+        $sql = static::replacePlaceholder($sql);
+        $sql = static::appendLock($sql);
+        $result = static::getConnection()->queryScalar($sql, $this->params);
+        $this->reset();
+        return $result;
+    }
+
+    /**
+     * 限制查询返回记录条数
+     *
+     * @param int|string $limit 为string时，可以指定offset，例如"20,10"
+     * @return $this
+     */
+    public function limit($limit)
+    {
+        if (is_string($limit) && strpos($limit, ',') !== false) {
+            list($this->offset, $limit) = explode(',', $limit);
+        }
+        $this->limit = trim($limit);
+        return $this;
+    }
+
+    /**
+     * 设置查询跳过记录数
+     *
+     * @param int $offset
+     * @return $this
+     */
+    public function offset($offset)
+    {
+        $this->offset = $offset;
+        return $this;
+    }
+
+    /**
+     * @param array|string $columns
+     * @return $this
+     */
+    public function orderBy($columns)
+    {
+        $this->orderBy = $this->normalizeOrderBy($columns);
+        return $this;
     }
 
     /**
@@ -206,6 +394,129 @@ class Builder
             $this->params = array_merge($this->params, $params);
         }
         return $this;
+    }
+
+    /**
+     * 设置条件(IN查询) 例如 `whereIn('id', [1, 2, 3])`
+     *
+     * @param string $field 字段
+     * @param array $values 条件值，索引数组
+     * @param bool $andWhere 对应where()方法三个参数
+     * @return $this
+     * @throws Exception
+     */
+    public function whereIn($field, array $values, $andWhere = true)
+    {
+        self::checkColumnName($field);
+
+        // in条件为空时，无法确定作为无条件处理(返回全部数据)，还是不匹配任一记录
+        if (count($values) == 0) {
+            throw new Exception(__CLASS__ . '::whereIn() 第二个参数不能为空数组');
+        }
+
+        $values = array_values($values);
+        $this->where('[[' . $field . ']] IN (' . rtrim(str_repeat('?,', count($values)), ',') . ')', $values, $andWhere);
+        return $this;
+    }
+
+    /**
+     * 指定查询返回的类名，默认情况下`findAll()`以关联数组格式返回结果，调用`asEntity()`指定类名后，查询将以对象返回
+     *
+     * 默认情况下`findAll()`方法返回:
+     * [
+     *      ['id'=>1, 'name'=>'Jack'],
+     *      ['id'=>2, 'name'=>'Mary']
+     * ]
+     *
+     * 指定返回类名之后，asEntity('User')->findAll() 方法将返回:
+     * [
+     *      object(User) public 'id'=>1, 'name'=>'Jack',
+     *      object(User) public 'id'=>2, 'name'=>'Mary',
+     * ]
+     *
+     * @param $className
+     * @return $this
+     */
+    public function asEntity($className)
+    {
+        $this->fetchClass = $className;
+        return $this;
+    }
+
+    /**
+     * FOR UPDATE 在事务中有效
+     *
+     * @return $this
+     */
+    public function lockForUpdate()
+    {
+        $this->lockForUpdate = true;
+        return $this;
+    }
+
+    /**
+     * 指定查询字段 推荐使用数组，例如 ['id', 'name', 'age']
+     * @param array|string $field
+     * @return $this
+     */
+    public function field($field)
+    {
+        $this->field = $field;
+        return $this;
+    }
+
+    /**
+     * 处理数组条件
+     *
+     * @param array $where
+     * @param bool $andGlue 是否使用AND连接数组中的多个成员
+     * @param bool $andWhere 重复调用`where()`时，默认使用`AND`与已有条件连接，此参数为`false`时，使用`OR`连接条件
+     * @return $this
+     */
+    protected function whereWithArray(array $where, $andGlue = true, $andWhere = true)
+    {
+        if (static::isEmpty($where)) {
+            return $this;
+        }
+        $params = array();
+        $conditions = array();
+        foreach ($where as $k => $v) {
+            static::checkColumnName($k);
+            $conditions[] = '[[' . $k . ']] = ?';
+            $params[] = $v;
+        }
+        $glue = $andGlue ? ' AND ' : ' OR ';
+        return $this->where(join($glue, $conditions), $params, $andWhere);
+    }
+
+    /**
+     * 规范为数组格式
+     *
+     * @param array|string $columns
+     * @return array
+     */
+    protected function normalizeOrderBy($columns)
+    {
+        if (is_array($columns)) {
+            return $columns;
+        }
+
+        if (static::isEmpty($columns)) {
+            return null;
+        }
+
+        $columns = preg_split('/\s*,\s*/', trim($columns), -1, PREG_SPLIT_NO_EMPTY);
+
+        $result = array();
+        foreach ($columns as $column) {
+            if (preg_match('/^(.*?)\s+(asc|desc)$/i', $column, $matches)) {
+                $result[$matches[1]] = strcasecmp($matches[2], 'desc') ? SORT_ASC : SORT_DESC;
+            } else {
+                $result[$column] = SORT_ASC;
+            }
+        }
+
+        return $result;
     }
 
     /**
@@ -294,27 +605,17 @@ class Builder
     }
 
     /**
-     * 处理数组条件
+     * lockForUpdate
      *
-     * @param array $where
-     * @param bool $andGlue 是否使用AND连接数组中的多个成员
-     * @param bool $andWhere 重复调用`where()`时，默认使用`AND`与已有条件连接，此参数为`false`时，使用`OR`连接条件
-     * @return $this
+     * @param $sql
+     * @return string
      */
-    protected function whereWithArray(array $where, $andGlue = true, $andWhere = true)
+    protected function appendLock($sql)
     {
-        if (static::isEmpty($where)) {
-            return $this;
+        if ($this->lockForUpdate === true) {
+            $sql = rtrim($sql) . ' FOR UPDATE';
         }
-        $params = array();
-        $conditions = array();
-        foreach ($where as $k => $v) {
-            static::checkColumnName($k);
-            $conditions[] = '[[' . $k . ']] = ?';
-            $params[] = $v;
-        }
-        $glue = $andGlue ? ' AND ' : ' OR ';
-        return $this->where(join($glue, $conditions), $params, $andWhere);
+        return $sql;
     }
 
     /**
@@ -378,5 +679,4 @@ class Builder
         $this->params = null;
         $this->lockForUpdate = null;
     }
-
 }
