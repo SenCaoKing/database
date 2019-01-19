@@ -15,4 +15,8 @@ $db->getConnection()->enableQueryLog();
 
 $id = $db->table('test')->insertGetId(['username' =>134, 'status' => '0']);
 
-var_dump($id);
+$count = $db->table('test')->lockForUpdate()->count('id');
+
+var_dump($count);
+
+var_dump($db->getConnection()->getQueryLog());
