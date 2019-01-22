@@ -131,20 +131,25 @@ class Builder
      *
      * @param string $sql
      * @param array $params
-     * @param null|string $fetchClass
      * @return array|object[]
      */
-    public function findAllBySql($sql = '', $params = array(), $fetchClass = null)
+    public function findAllBySql($sql = '', $params = array())
     {
         $sql = static::appendLock($sql);
+
+        $useWritePdo = $this->useWritePdo;
+        $fetchClass = $this->fetchClass;
 
         $this->reset();
 
         if ($fetchClass === null) {
-            return static::getConnection()->query($sql, $params, \PDO::FETCH_ASSOC, !$this->useWritePdo);
+            $fetchModel = array(\PDO::FETCH_ASSOC);
         } else {
-            return static::getConnection()->query($sql, $params, array(\PDO::FETCH_CLASS, $fetchClass), !$this->useWritePdo);
+            $fetchModel = array(\PDO::FETCH_ASSOC, $fetchClass);
+
         }
+
+        return static::getConnection()->query($sql, $params, $fetchModel, !$useWritePdo);
     }
 
     /**
@@ -165,7 +170,7 @@ class Builder
             . $this->getLimitString();
 
         $sql = static::replacePlaceholder($sql);
-        return static::findAllBySql($sql, $this->params, $this->fetchClass);
+        return static::findAllBySql($sql, $this->params);
     }
 
     /**
@@ -176,7 +181,7 @@ class Builder
      */
     public function findOneBySql($sql = '', $params = array())
     {
-        $rows = static::findAllBySql($sql, $params, $this->fetchClass);
+        $rows = static::findAllBySql($sql, $params);
         if (count($rows) > 0) {
             return $rows[0];
         }
@@ -670,6 +675,7 @@ class Builder
 
     /**
      * 在查询操作中，默认使用从库，调用此方法后，将强制使用主库做查询
+     *
      * @return $this
      */
     public function useWritePdo()
