@@ -205,7 +205,7 @@ class Builder
      *
      * @param int $pk 主键值，不支持符合主键
      * @param string $primaryKeyField 主键字段，默认为`id`
-     * @return array|null|object
+     * @return array|null|object|mixed|null
      */
     public function findByPk($pk, $primaryKeyField = 'id')
     {
